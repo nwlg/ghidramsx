@@ -1,0 +1,31 @@
+// build.gradle
+
+def ghidraInstallDir = '/home/bitvision/GHIDRA/ghidra_12.0.1_PUBLIC'
+
+// Check if folder is available
+def ghidraRoot = new File(ghidraInstallDir)
+if (!ghidraRoot.exists() || !ghidraRoot.isDirectory()) {
+    throw new GradleException("Ghidra path not found or it's not a folder: ${ghidraInstallDir}")
+}
+
+// Official Ghidra script
+def supportScript = new File(ghidraRoot, "support/buildExtension.gradle")
+if (supportScript.exists()) {
+    apply from: supportScript
+} else {
+    throw new GradleException("""
+Cannot find buildExtension.gradle at:
+  ${supportScript.absolutePath}
+
+It may be because:
+- Wrong Ghidra path
+- Old version
+    """)
+}
+
+
+// Java compatibility
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
