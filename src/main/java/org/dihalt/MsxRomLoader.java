@@ -35,39 +35,8 @@ import java.util.stream.Collectors;
 public class MsxRomLoader extends AbstractLibrarySupportLoader {
 
     private static final long ROM_BASE = 0x4000;
-    public static final String MEGAROMTYPES_LIST_STRING = Arrays.stream(MegaRomType.values()).map(megaRomType -> megaRomType.description).collect(Collectors.joining(" | "));
+    public static final String MEGAROMTYPES_LIST_STRING = Arrays.stream(MegaRomType.values()).map(megaRomType -> megaRomType.getDescription()).collect(Collectors.joining(" | "));
     public static final String ROM_MEGAROM_TYPE = "Rom/MegaRom type: ";
-
-
-    public enum MegaRomType {
-        PLAIN("PLAIN"),
-        ASCII16("ASCII16"),
-        ASCII8("ASCII8"),
-        KONAMI4("KONAMI4"),
-        KONAMI5("KONAMI5");
-
-        private final String description;
-
-        MegaRomType(String description) {
-            this.description = description;
-        }
-
-        public String getDescription() {
-            return description;
-        }
-
-        //get enum by name
-        public static MegaRomType fromName(String name) {
-            for (MegaRomType type : values()) {
-                if (type.name().equalsIgnoreCase(name) || type.description.equalsIgnoreCase(name)) {
-                    return type;
-                }
-            }
-            return null; // noy found
-        }
-    }
-
-
 
     @Override
     public String getName() {
@@ -94,11 +63,11 @@ public class MsxRomLoader extends AbstractLibrarySupportLoader {
             throw new RuntimeException(e);
         }
 
-        Msg.info(this, "MSX: Setting ROM type: " + detected.description);
+        Msg.info(this, "MSX: Setting ROM type: " + detected.getDescription());
         // Option: Setting default rom type: MegaROM or plain type
         list.add(new Option(
                 ROM_MEGAROM_TYPE + MEGAROMTYPES_LIST_STRING,
-                detected.description,
+                detected.getDescription(),
                 String.class,
                 ROM_MEGAROM_TYPE + MEGAROMTYPES_LIST_STRING
         ));
@@ -139,7 +108,7 @@ public class MsxRomLoader extends AbstractLibrarySupportLoader {
 
     @Override
     public Collection<LoadSpec> findSupportedLoadSpecs(ByteProvider provider) throws IOException {
-        Msg.info(this, "MSX: probing ROM");
+        Msg.info(this, "MSX: Probing ROM");
 
         long size = provider.length();
         if ((provider.length() % 0x2000) != 0) { // 0x2000 = 8192 = 8K
@@ -153,7 +122,7 @@ public class MsxRomLoader extends AbstractLibrarySupportLoader {
             byte b1 = provider.readByte(1);
 
             if (b0 != 'A' || b1 != 'B') {
-                Msg.info(this, "MSX: it's not a ROM, it doesn't start AB.");
+                Msg.info(this, "MSX: It's not a ROM, it doesn't start AB.");
                 return List.of(); // unsupported
             }
         } catch (IOException e) {
@@ -191,7 +160,7 @@ public class MsxRomLoader extends AbstractLibrarySupportLoader {
         // Determine page size and slot bases
         long page_size;
         long[] slot_bases;
-        if (megaRomType == null) {
+        if (megaRomType == MegaRomType.PLAIN) {
             page_size = size;
             slot_bases = new long[]{ROM_BASE};
         } else if (megaRomType == MegaRomType.ASCII16) {
@@ -301,7 +270,7 @@ public class MsxRomLoader extends AbstractLibrarySupportLoader {
             throw new RuntimeException(e);
         }
 
-        Msg.info(this, String.format("MSX: entry point = 0x%04X", entry));
+        Msg.info(this, String.format("MSX: Entry point = 0x%04X", entry));
 
         // Does this really work?
         program.getOptions(Program.PROGRAM_INFO)
@@ -385,7 +354,7 @@ public class MsxRomLoader extends AbstractLibrarySupportLoader {
             MessageLog log
     ) throws IOException {
 
-        Msg.info(this,"MSX: loading msx_symbols.txt");
+        Msg.info(this,"MSX: Loading msx_symbols.txt");
         InputStream is = getClass().getClassLoader()
                 .getResourceAsStream("msx_symbols.txt");
 
