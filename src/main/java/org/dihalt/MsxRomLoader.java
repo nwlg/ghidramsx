@@ -1,9 +1,15 @@
 package org.dihalt;
 
+import ghidra.framework.model.DomainObject;
+import ghidra.app.util.Option;
+import ghidra.app.util.opinion.LoadSpec;
+
+import java.util.Arrays;
+import java.util.List;
+
 import ghidra.app.util.bin.ByteProvider;
 import ghidra.app.util.importer.MessageLog;
 import ghidra.app.util.opinion.AbstractLibrarySupportLoader;
-import ghidra.app.util.opinion.LoadSpec;
 import ghidra.program.database.function.OverlappingFunctionException;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressSpace;
@@ -23,15 +29,112 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.util.Collection;
-import java.util.List;
+import java.util.Optional;
+import java.util.stream.Collectors;
 
 public class MsxRomLoader extends AbstractLibrarySupportLoader {
 
     private static final long ROM_BASE = 0x4000;
+    public static final String MEGAROMTYPES_LIST_STRING = Arrays.stream(MegaRomType.values()).map(megaRomType -> megaRomType.description).collect(Collectors.joining(" | "));
+    public static final String ROM_MEGAROM_TYPE = "Rom/MegaRom type: ";
+
+
+    public enum MegaRomType {
+        PLAIN("PLAIN"),
+        ASCII16("ASCII16"),
+        ASCII8("ASCII8"),
+        KONAMI4("KONAMI4"),
+        KONAMI5("KONAMI5");
+
+        private final String description;
+
+        MegaRomType(String description) {
+            this.description = description;
+        }
+
+        public String getDescription() {
+            return description;
+        }
+
+        //get enum by name
+        public static MegaRomType fromName(String name) {
+            for (MegaRomType type : values()) {
+                if (type.name().equalsIgnoreCase(name) || type.description.equalsIgnoreCase(name)) {
+                    return type;
+                }
+            }
+            return null; // noy found
+        }
+    }
+
+
 
     @Override
     public String getName() {
         return "MSX ROM Loader";
+    }
+
+    /*
+     Megarom strategy:
+      Basically is guessing megarom type and setting as default option
+      User may change default option to a valid option
+     */
+    @Override
+    public List<Option> getDefaultOptions(ByteProvider provider, LoadSpec loadSpec,
+                                          DomainObject domainObject, boolean loadIntoProgram,
+                                          boolean mirrorFsLayout) {
+
+        List<Option> list = super.getDefaultOptions(provider, loadSpec, domainObject,
+                loadIntoProgram, mirrorFsLayout);
+
+        MegaRomType detected;
+        try {
+            detected = getMegaromType(provider);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+
+        Msg.info(this, "MSX: Setting ROM type: " + detected.description);
+        // Option: Setting default rom type: MegaROM or plain type
+        list.add(new Option(
+                ROM_MEGAROM_TYPE + MEGAROMTYPES_LIST_STRING,
+                detected.description,
+                String.class,
+                ROM_MEGAROM_TYPE + MEGAROMTYPES_LIST_STRING
+        ));
+
+        return list;
+    }
+
+    // Called during loading
+    public MegaRomType validateUserOptions(ImporterSettings s) {
+        Msg.info(this, "MSX: Validating options ...");
+        List<Option> optionList = s.options();   // get previous selected options
+        MegaRomType megaRomType = MegaRomType.PLAIN; // default
+        // read megarom option
+        Optional<Option> megaromOption = optionList.stream()
+                .filter(option ->  (ROM_MEGAROM_TYPE + MEGAROMTYPES_LIST_STRING).equals(option.getName()))
+                .findFirst();
+
+        // validate
+        if (megaromOption.isPresent()) {
+            String raw = ((String) megaromOption.get().getValue())
+            .trim()
+                    .toUpperCase()
+                    .replace(" ", "")
+                    .replace("-", ""); // clean string
+            try {
+                megaRomType = MegaRomType.valueOf(raw);
+            }
+            catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException(
+                        "Invalid MegaROM Type: '" + raw +
+                                "'. Valid values are: " + MEGAROMTYPES_LIST_STRING
+                );
+            }
+            Msg.info(this, "MSX: MegaROM type:" + megaRomType.getDescription());
+        }
+        return megaRomType;
     }
 
     @Override
@@ -62,119 +165,6 @@ public class MsxRomLoader extends AbstractLibrarySupportLoader {
         LanguageCompilerSpecPair pair = new LanguageCompilerSpecPair("z80:LE:16:default", "default");
         return List.of(new LoadSpec(this, 0, pair, true));
     }
-/*
-    @Override
-    protected void load(
-            Program program,
-            ImporterSettings s)
-            throws CancelledException, IOException {
-
-        ByteProvider provider = s.provider();
-        TaskMonitor monitor = s.monitor();
-        MessageLog log = s.log();
-
-        AddressSpace space = program.getAddressFactory().getDefaultAddressSpace();
-
-        monitor.setMessage("Loading MSX ROM...");
-        MegaRomType megaRomType = getMegaromType(provider);
-        if (megaRomType!=null) {
-            Msg.info(this, "MSX: Megarom type guessed: " + megaRomType.getDescription());
-        } else {
-            Msg.info(this, "MSX: No megarom found!.");
-        }
-
-        // Build memory blocks
-        long size = provider.length();
-        Address start = space.getAddress(ROM_BASE);
-
-        try {
-            monitor.setMessage("Building BIOS block ...");
-            program.getMemory().createUninitializedBlock(
-                    "BIOS",
-                    space.getAddress(0x0000),
-                    0x4000,
-                    false   // overlay?
-            );
-
-            monitor.setMessage("Building ROM block ...");
-            program.getMemory().createInitializedBlock(
-                    "ROM",
-                    start,
-                    provider.getInputStream(0),
-                    0x4000,
-//                    size,
-                    monitor,
-                    false
-            );
-
-            monitor.setMessage("Building RAM block ...");
-            program.getMemory().createUninitializedBlock(
-                    "RAM",
-                    space.getAddress(0xC000),
-                    0x4000,
-                    false
-            );
-
-            MemoryBlock bios = program.getMemory().getBlock("BIOS");
-            bios.setRead(true);
-            bios.setWrite(false);
-            bios.setExecute(true);
-
-            MemoryBlock rom = program.getMemory().getBlock("ROM");
-            rom.setRead(true);
-            rom.setWrite(false);
-            rom.setExecute(true);
-
-            MemoryBlock ram = program.getMemory().getBlock("RAM");
-            ram.setRead(true);
-            ram.setWrite(true);
-            ram.setExecute(true); // yeah, it could happen!
-
-            bios.setName("BIOS");
-            rom.setName("ROM");
-            ram.setName("RAM");
-
-        } catch (Exception e) {
-            throw new IOException("Error building memory block", e);
-        }
-
-        Msg.info(this, "ROM loaded at 0x4000, size=" + size);
-        log.appendMsg("ROM loaded at 0x4000 (" + size + " bytes)");
-
-        if (size < 4) {
-            log.appendMsg("ROM too small to contain entry point");
-            return;
-        }
-
-        int entry = readLittleEndianWord(provider, 2);
-        Address entryAddr = space.getAddress(entry);
-
-        CodeUnit cu = program.getListing().getCodeUnitAt(entryAddr);
-        if (cu != null) {
-            cu.setComment(CommentType.EOL, "MSX cartridge entry point");
-        }
-
-        try {
-            createEntryPoint(program, entryAddr);
-        } catch (InvalidInputException e) {
-            throw new RuntimeException(e);
-        } catch (OverlappingFunctionException e) {
-            throw new RuntimeException(e);
-        }
-
-        Msg.info(this, String.format("MSX entry point = 0x%04X", entry));
-
-        // Does this really work?
-        program.getOptions(Program.PROGRAM_INFO)
-                .setBoolean("Show Block Name", true);
-
-        program.getOptions(Program.PROGRAM_INFO)
-                .setBoolean("Show Block Name Instead of Space", true);
-
-        // Add msx_symbols.txt labels
-        loadSymbolsFromResource(program, space, log);
-    }
-*/
 
     @Override
     protected void load(
@@ -186,19 +176,18 @@ public class MsxRomLoader extends AbstractLibrarySupportLoader {
         TaskMonitor monitor = s.monitor();
         MessageLog log = s.log();
 
-        AddressSpace space = program.getAddressFactory().getDefaultAddressSpace();
 
-        monitor.setMessage("Loading MSX ROM...");
-        MegaRomType megaRomType = getMegaromType(provider);
-        if (megaRomType != null) {
-            Msg.info(this, "MSX: Megarom type guessed: " + megaRomType.getDescription());
-        } else {
-            Msg.info(this, "MSX: No megarom found!.");
-        }
+        MegaRomType megaRomType = validateUserOptions(s);
+        AddressSpace space = program.getAddressFactory().getDefaultAddressSpace();
 
         // Build memory blocks
         long size = provider.length();
 
+        if (megaRomType != MegaRomType.PLAIN) {
+            monitor.setMessage("MSX: Generating megarom pages...");
+        } else {
+            monitor.setMessage("MSX: Generating plain rom pages...");
+        }
         // Determine page size and slot bases
         long page_size;
         long[] slot_bases;
@@ -285,14 +274,14 @@ public class MsxRomLoader extends AbstractLibrarySupportLoader {
             ram.setExecute(true); // yeah, it could happen!
 
         } catch (Exception e) {
-            throw new IOException("Error building memory block", e);
+            throw new IOException("MSX: Error building memory block", e);
         }
 
-        Msg.info(this, "ROM loaded at 0x4000, size=" + size);
-        log.appendMsg("ROM loaded at 0x4000 (" + size + " bytes)");
+        Msg.info(this, "MSX: ROM loaded at 0x4000, size=" + size);
+        log.appendMsg("MSX: ROM loaded at 0x4000 (" + size + " bytes)");
 
         if (size < 4) {
-            log.appendMsg("ROM too small to contain entry point");
+            log.appendMsg("MSX: ROM too small to contain entry point");
             return;
         }
 
@@ -312,7 +301,7 @@ public class MsxRomLoader extends AbstractLibrarySupportLoader {
             throw new RuntimeException(e);
         }
 
-        Msg.info(this, String.format("MSX entry point = 0x%04X", entry));
+        Msg.info(this, String.format("MSX: entry point = 0x%04X", entry));
 
         // Does this really work?
         program.getOptions(Program.PROGRAM_INFO)
@@ -386,7 +375,7 @@ public class MsxRomLoader extends AbstractLibrarySupportLoader {
         }
         if (maxIndex!=1000){
             return MegaRomType.values()[maxIndex];
-        } else return null;
+        } else return MegaRomType.PLAIN;
     }
 
 
@@ -434,7 +423,7 @@ public class MsxRomLoader extends AbstractLibrarySupportLoader {
                         SourceType.IMPORTED
                 );
             } catch (Exception e) {
-                log.appendMsg("Cannot create symbol " + name + " at " + parts[0]);
+                log.appendMsg("MSX: Cannot create symbol " + name + " at " + parts[0]);
             }
         }
         br.close();
