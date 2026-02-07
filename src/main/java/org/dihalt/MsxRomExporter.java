@@ -5,77 +5,34 @@ import ghidra.app.util.Option;
 import ghidra.app.util.exporter.Exporter;
 import ghidra.app.util.exporter.ExporterException;
 import ghidra.framework.model.DomainObject;
-import ghidra.program.model.address.Address;
-import ghidra.program.model.address.AddressSetView;
+import ghidra.program.model.address.*;
 import ghidra.program.model.listing.*;
-import ghidra.program.model.mem.Memory;
-import ghidra.program.model.mem.MemoryAccessException;
-import ghidra.program.model.mem.MemoryBlock;
+import ghidra.program.model.mem.*;
+import ghidra.program.model.symbol.Reference;
 import ghidra.program.model.symbol.Symbol;
+import ghidra.program.model.symbol.SymbolTable;
 import ghidra.util.HelpLocation;
-import ghidra.util.Msg;
 import ghidra.util.task.TaskMonitor;
-import ghidra.program.model.listing.CommentType;
 
 import java.io.*;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 
 public class MsxRomExporter extends Exporter {
 
     private static final String OPTION_MEGAROM_TYPE = "MegaROM Type";
     private static final String OPTION_INCLUDE_COMMENTS = "Include ASM remarks";
     private static final String OPTION_ONLY_ROM_BANKS = "Export only ROM banks";
+    private static final String OPTION_FILL_WITH_DB = "Fill gaps & data with db";
+    private static final String OPTION_SMART_DATA = "Smart data representation";
 
     private MegaRomType megaRomType = MegaRomType.PLAIN;
     private boolean includeComments = true;
     private boolean onlyRomBanks = false;
+    private boolean fillWithDb = true;
+    private boolean smartData = true;
 
     public MsxRomExporter() {
-        super(
-                "MSX ROM SJasm ASM exporter",
-                "rom",
-                new HelpLocation("","")
-        );
-    }
-
-    // =============================================================
-    // REQUIRED by Exporter (Ghidra 12.0.1)
-    // =============================================================
-
-    @Override
-    public List<Option> getOptions(
-            DomainObjectService domainObjectService) {
-
-        DomainObject domainObj = domainObjectService.getDomainObject();
-
-        List<Option> options = new ArrayList<>();
-        if (options == null) {
-            options = new ArrayList<>();
-        }
-
-        String defaultType = megaRomType.getDescription();
-
-        options.add(new Option(
-                OPTION_MEGAROM_TYPE,
-                defaultType,
-                String.class,
-                "MegaROM types: "
-                        + MsxRomLoader.MEGAROMTYPES_LIST_STRING));
-
-        options.add(new Option(
-                OPTION_INCLUDE_COMMENTS,
-                includeComments,
-                Boolean.class,
-                "Include EOL Ghidra comments on ASM listing"));
-
-        options.add(new Option(
-                OPTION_ONLY_ROM_BANKS,
-                onlyRomBanks,
-                Boolean.class,
-                "Export just ROM blocks"));
-
-        return options;
+        super("MSX ROM SJASM ASM exporter", "rom", new HelpLocation("", ""));
     }
 
     // =============================================================
@@ -83,34 +40,37 @@ public class MsxRomExporter extends Exporter {
     // =============================================================
 
     @Override
-    public void setOptions(List<Option> options)
-            throws ghidra.app.util.OptionException {
+    public List<Option> getOptions(DomainObjectService svc) {
 
-        for (Option option : options) {
-            String name = option.getName();
-            Object value = option.getValue();
+        List<Option> opts = new ArrayList<>();
 
-            if (OPTION_MEGAROM_TYPE.equals(name)) {
-                String typeStr = ((String) value).trim().toUpperCase();
-                MegaRomType type = MegaRomType.fromName(typeStr);
-                if (type == null) {
-                    throw new ghidra.app.util.OptionException(
-                            "Invalid MegaROM type: " + typeStr);
-                }
-                megaRomType = type;
+        opts.add(new Option(
+                OPTION_MEGAROM_TYPE,
+                megaRomType.getDescription(),
+                String.class,
+                MsxRomLoader.MEGAROMTYPES_LIST_STRING));
 
-            } else if (OPTION_INCLUDE_COMMENTS.equals(name)) {
-                includeComments = (Boolean) value;
+        opts.add(new Option(OPTION_INCLUDE_COMMENTS, includeComments, Boolean.class, ""));
+        opts.add(new Option(OPTION_ONLY_ROM_BANKS, onlyRomBanks, Boolean.class, ""));
+        opts.add(new Option(OPTION_FILL_WITH_DB, fillWithDb, Boolean.class, ""));
+        opts.add(new Option(OPTION_SMART_DATA, smartData, Boolean.class, ""));
 
-            } else if (OPTION_ONLY_ROM_BANKS.equals(name)) {
-                onlyRomBanks = (Boolean) value;
+        return opts;
+    }
+
+    @Override
+    public void setOptions(List<Option> options) {
+
+        for (Option o : options) {
+            switch (o.getName()) {
+                case OPTION_MEGAROM_TYPE ->
+                        megaRomType = MegaRomType.fromName(((String) o.getValue()).trim().toUpperCase());
+                case OPTION_INCLUDE_COMMENTS -> includeComments = (Boolean) o.getValue();
+                case OPTION_ONLY_ROM_BANKS -> onlyRomBanks = (Boolean) o.getValue();
+                case OPTION_FILL_WITH_DB -> fillWithDb = (Boolean) o.getValue();
+                case OPTION_SMART_DATA -> smartData = (Boolean) o.getValue();
             }
         }
-
-        Msg.info(this,
-                "Applied options - MegaROM: " + megaRomType +
-                        ", Comments: " + includeComments +
-                        ", ROM binary: " + onlyRomBanks);
     }
 
     // =============================================================
@@ -118,35 +78,19 @@ public class MsxRomExporter extends Exporter {
     // =============================================================
 
     @Override
-    public boolean export(
-            File file,
-            DomainObject domainObj,
-            AddressSetView addrSet,
-            TaskMonitor monitor)
+    public boolean export(File file, DomainObject domainObj, AddressSetView addrSet, TaskMonitor monitor)
             throws ExporterException, IOException {
 
-        if (!(domainObj instanceof Program)) {
-            throw new ExporterException(
-                    "Only Program can be exported");
+        if (!(domainObj instanceof Program program)) {
+            throw new ExporterException("Only Program supported");
         }
 
-        Program program = (Program) domainObj;
-
-        monitor.initialize(100);
-        monitor.setMessage("Exporting MSX ROM + ASM...");
-
-        File binFile = file;
         try {
-            exportBinary(binFile, program, addrSet, monitor);
+            exportBinary(file, program);
         } catch (MemoryAccessException e) {
-            e.printStackTrace();
+            throw new RuntimeException(e);
         }
-
-        File asmFile = changeExtension(binFile, ".asm");
-        exportAssembly(asmFile, program, addrSet, monitor);
-
-        Msg.info(this,
-                "MSX: Exported: " + binFile + " + " + asmFile);
+        exportAssembly(changeExtension(file, ".asm"), program, addrSet, monitor);
 
         return true;
     }
@@ -155,33 +99,17 @@ public class MsxRomExporter extends Exporter {
     // BIN
     // =============================================================
 
-    private void exportBinary(
-            File binFile,
-            Program program,
-            AddressSetView addrSet,
-            TaskMonitor monitor)
+    private void exportBinary(File f, Program program)
             throws IOException, MemoryAccessException {
 
-        try (FileOutputStream fos = new FileOutputStream(binFile)) {
+        try (FileOutputStream fos = new FileOutputStream(f)) {
+            for (MemoryBlock block : program.getMemory().getBlocks()) {
+                if (onlyRomBanks && !isLikelyRomBlock(block)) continue;
+                if (!block.isInitialized()) continue;
 
-            Memory memory = program.getMemory();
-
-            for (MemoryBlock block : memory.getBlocks()) {
-
-                if (onlyRomBanks && !isLikelyRomBlock(block)) {
-                    continue;
-                }
-
-                if (!block.isInitialized()) {
-                    continue;
-                }
-
-                monitor.setMessage(
-                        "Wrinting block: " + block.getName());
-
-                byte[] bytes = new byte[(int) block.getSize()];
-                block.getBytes(block.getStart(), bytes);
-                fos.write(bytes);
+                byte[] buf = new byte[(int) block.getSize()];
+                block.getBytes(block.getStart(), buf);
+                fos.write(buf);
             }
         }
     }
@@ -190,58 +118,154 @@ public class MsxRomExporter extends Exporter {
     // ASM
     // =============================================================
 
-    private void exportAssembly(
-            File asmFile,
-            Program program,
-            AddressSetView addrSet,
-            TaskMonitor monitor)
+    private void exportAssembly(File asmFile, Program program,
+                                AddressSetView addrSet, TaskMonitor monitor)
             throws IOException {
 
-        try (PrintWriter writer =
-                     new PrintWriter(new FileWriter(asmFile))) {
+        Listing listing = program.getListing();
+        AddressSetView set = (addrSet != null) ? addrSet : program.getMemory();
+        Address maxAddr = set.getMaxAddress();
 
-            writer.println("; Exported from Ghidra for SJASM - MSX ROM");
-            writer.println("; MegaROM type: " + megaRomType.getDescription());
-            writer.println("    ORG     0x4000");
-            writer.println();
+        try (PrintWriter w = new PrintWriter(new FileWriter(asmFile))) {
 
-            Listing listing = program.getListing();
-            AddressSetView effectiveSet =
-                    (addrSet != null) ? addrSet : program.getMemory();
+            w.println("; MSX ROM SJASM export");
+            w.println("    ORG 0x4000");
+            w.println();
 
-            InstructionIterator instrIter =
-                    listing.getInstructions(effectiveSet, true);
+            Address last = set.getMinAddress();
+            CodeUnitIterator it = listing.getCodeUnits(set, true);
 
-            while (instrIter.hasNext()) {
+            while (it.hasNext() && !monitor.isCancelled()) {
 
-                Instruction instr = instrIter.next();
-                Address addr = instr.getAddress();
+                CodeUnit cu = it.next();
+                Address addr = cu.getAddress();
 
-                Symbol primary =
-                        program.getSymbolTable()
-                                .getPrimarySymbol(addr);
-
-                if (primary != null &&
-                        !primary.getName().startsWith("FUN_")) {
-                    writer.println(primary.getName() + ":");
+                if (fillWithDb && last.compareTo(addr) < 0) {
+                    emitDbRange(w, program, last, addr);
                 }
 
-                String asm = instr.toString();
-
-                if (includeComments) {
-                    String comment =
-                            listing.getComment(
-                                    CommentType.EOL, addr);
-                    if (comment != null && !comment.isEmpty()) {
-                        asm += "  ; " + comment;
-                    }
+                if (cu instanceof Instruction i) {
+                    emitInstruction(w, i, program);
+                } else if (cu instanceof Data d) {
+                    emitData(w, d, program);
                 }
 
-                writer.println("    " + asm);
+                Address end = cu.getMaxAddress();
+                if (end.equals(maxAddr)) break;
+                last = end.add(1);
             }
 
-            writer.println();
-            writer.println("    END");
+            if (fillWithDb && last.compareTo(maxAddr) < 0) {
+                emitDbRange(w, program, last, maxAddr);
+            }
+
+            w.println();
+            w.println("    END");
+        }
+    }
+
+    // =============================================================
+    // Emit helpers
+    // =============================================================
+
+    private void emitInstruction(PrintWriter w, Instruction instr, Program program) {
+
+        Address addr = instr.getAddress();
+        Symbol s = program.getSymbolTable().getPrimarySymbol(addr);
+        if (s != null && !s.getName().startsWith("FUN_") && !s.getName().startsWith("LAB_")) {  // opcional: filtra LAB_ si no te gustan
+            w.println(s.getName() + ":");
+        }
+
+        String mnemonic = instr.getMnemonicString();
+        StringBuilder sb = new StringBuilder("    " + mnemonic);
+
+        int ops = instr.getNumOperands();
+        if (ops > 0) sb.append(" ");
+
+        SymbolTable symtab = program.getSymbolTable();
+
+        for (int i = 0; i < ops; i++) {
+
+            if (i > 0) sb.append(",");
+
+            // 1. Intentamos obtener la referencia primaria del operando (la más importante)
+            Reference ref = instr.getPrimaryReference(i);
+            if (ref != null && ref.getToAddress() != null && !ref.getToAddress().equals(Address.NO_ADDRESS)) {
+                Address target = ref.getToAddress();
+                Symbol sym = symtab.getPrimarySymbol(target);
+                if (sym != null && sym.getName().length() > 0) {
+                    sb.append(sym.getName());
+                    continue;
+                }
+            }
+
+            // 2. Si no hay referencia primaria útil → fallback a getOpObjects
+            Object[] objs = instr.getOpObjects(i);
+            boolean handled = false;
+
+            for (Object obj : objs) {
+                if (obj instanceof Address a && !a.equals(Address.NO_ADDRESS)) {
+                    Symbol sym = symtab.getPrimarySymbol(a);
+                    if (sym != null && sym.getName().length() > 0) {
+                        sb.append(sym.getName());
+                        handled = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!handled) {
+                // fallback al string por defecto de Ghidra
+                sb.append(instr.getDefaultOperandRepresentation(i));
+            }
+        }
+
+        // comentarios EOL
+        if (includeComments) {
+            String c = program.getListing().getComment(CommentType.EOL, addr);
+            if (c != null && !c.isBlank()) {
+                sb.append("  ; ").append(c.trim());
+            }
+        }
+
+        w.println(sb.toString());
+    }
+
+    private void emitData(PrintWriter w, Data data, Program program) {
+
+        Address start = data.getAddress();
+        Address max = start.getAddressSpace().getMaxAddress();
+
+        int len = data.getLength();
+        long available = max.subtract(start) + 1;
+        if (available <= 0) return;
+
+        int safeLen = (int) Math.min(len, available);
+        emitDbRange(w, program, start, start.add(safeLen));
+    }
+
+    private void emitDbRange(PrintWriter w, Program program, Address start, Address end) {
+
+        Memory mem = program.getMemory();
+        Address cur = start;
+
+        while (cur.compareTo(end) < 0) {
+
+            w.print("    db ");
+            int count = 0;
+
+            while (count < 16 && cur.compareTo(end) < 0) {
+                try {
+                    w.printf("0x%02X", mem.getByte(cur) & 0xFF);
+                } catch (MemoryAccessException e) {
+                    w.print("??");
+                }
+
+                cur = cur.add(1);
+                if (count < 15 && cur.compareTo(end) < 0) w.print(",");
+                count++;
+            }
+            w.println();
         }
     }
 
@@ -250,21 +274,295 @@ public class MsxRomExporter extends Exporter {
     // =============================================================
 
     private boolean isLikelyRomBlock(MemoryBlock block) {
-        String name = block.getName().toUpperCase();
         long start = block.getStart().getOffset();
+        String name = block.getName().toUpperCase();
         return start >= 0x4000 &&
-                (name.contains("ROM")
-                        || name.contains("SLOT")
-                        || name.contains("BANK"));
+                (name.contains("ROM") || name.contains("BANK") || name.contains("SLOT"));
     }
 
-    private File changeExtension(File original, String newExt) {
-        String path = original.getAbsolutePath();
-        int dotIndex = path.lastIndexOf('.');
-        if (dotIndex > 0) {
-            path = path.substring(0, dotIndex);
-        }
-        return new File(path + newExt);
+    private File changeExtension(File f, String ext) {
+        String p = f.getAbsolutePath();
+        int i = p.lastIndexOf('.');
+        if (i > 0) p = p.substring(0, i);
+        return new File(p + ext);
     }
 }
 
+/*
+package org.dihalt;
+
+
+import ghidra.app.util.DomainObjectService;
+import ghidra.app.util.Option;
+import ghidra.app.util.exporter.Exporter;
+import ghidra.app.util.exporter.ExporterException;
+import ghidra.framework.model.DomainObject;
+import ghidra.program.model.address.*;
+import ghidra.program.model.listing.*;
+import ghidra.program.model.mem.*;
+import ghidra.program.model.symbol.Reference;
+import ghidra.program.model.symbol.Symbol;
+import ghidra.program.model.symbol.SymbolTable;
+import ghidra.util.HelpLocation;
+import ghidra.util.task.TaskMonitor;
+
+import java.io.*;
+import java.util.*;
+
+public class MsxRomExporter extends Exporter {
+
+    private static final String OPTION_MEGAROM_TYPE = "MegaROM Type";
+    private static final String OPTION_INCLUDE_COMMENTS = "Include ASM remarks";
+    private static final String OPTION_ONLY_ROM_BANKS = "Export only ROM banks";
+    private static final String OPTION_FILL_WITH_DB = "Fill gaps & data with db";
+    private static final String OPTION_SMART_DATA = "Smart data representation";
+
+    private MegaRomType megaRomType = MegaRomType.PLAIN;
+    private boolean includeComments = true;
+    private boolean onlyRomBanks = false;
+    private boolean fillWithDb = true;
+    private boolean smartData = true;
+
+    public MsxRomExporter() {
+        super("MSX ROM SJASM ASM exporter", "rom", new HelpLocation("", ""));
+    }
+
+    // =============================================================
+    // Options
+    // =============================================================
+
+    @Override
+    public List<Option> getOptions(DomainObjectService svc) {
+
+        List<Option> opts = new ArrayList<>();
+
+        opts.add(new Option(
+                OPTION_MEGAROM_TYPE,
+                megaRomType.getDescription(),
+                String.class,
+                MsxRomLoader.MEGAROMTYPES_LIST_STRING));
+
+        opts.add(new Option(OPTION_INCLUDE_COMMENTS, includeComments, Boolean.class, ""));
+        opts.add(new Option(OPTION_ONLY_ROM_BANKS, onlyRomBanks, Boolean.class, ""));
+        opts.add(new Option(OPTION_FILL_WITH_DB, fillWithDb, Boolean.class, ""));
+        opts.add(new Option(OPTION_SMART_DATA, smartData, Boolean.class, ""));
+
+        return opts;
+    }
+
+    @Override
+    public void setOptions(List<Option> options) {
+
+        for (Option o : options) {
+            switch (o.getName()) {
+                case OPTION_MEGAROM_TYPE ->
+                        megaRomType = MegaRomType.fromName(((String) o.getValue()).trim().toUpperCase());
+                case OPTION_INCLUDE_COMMENTS -> includeComments = (Boolean) o.getValue();
+                case OPTION_ONLY_ROM_BANKS -> onlyRomBanks = (Boolean) o.getValue();
+                case OPTION_FILL_WITH_DB -> fillWithDb = (Boolean) o.getValue();
+                case OPTION_SMART_DATA -> smartData = (Boolean) o.getValue();
+            }
+        }
+    }
+
+    // =============================================================
+    // Export
+    // =============================================================
+
+    @Override
+    public boolean export(File file, DomainObject domainObj, AddressSetView addrSet, TaskMonitor monitor)
+            throws ExporterException, IOException {
+
+        if (!(domainObj instanceof Program program)) {
+            throw new ExporterException("Only Program supported");
+        }
+
+        try {
+            exportBinary(file, program);
+        } catch (MemoryAccessException e) {
+            throw new RuntimeException(e);
+        }
+        exportAssembly(changeExtension(file, ".asm"), program, addrSet, monitor);
+
+        return true;
+    }
+
+    // =============================================================
+    // BIN
+    // =============================================================
+
+    private void exportBinary(File f, Program program)
+            throws IOException, MemoryAccessException {
+
+        try (FileOutputStream fos = new FileOutputStream(f)) {
+            for (MemoryBlock block : program.getMemory().getBlocks()) {
+                if (onlyRomBanks && !isLikelyRomBlock(block)) continue;
+                if (!block.isInitialized()) continue;
+
+                byte[] buf = new byte[(int) block.getSize()];
+                block.getBytes(block.getStart(), buf);
+                fos.write(buf);
+            }
+        }
+    }
+
+    // =============================================================
+    // ASM
+    // =============================================================
+
+    private void exportAssembly(File asmFile, Program program,
+                                AddressSetView addrSet, TaskMonitor monitor)
+            throws IOException {
+
+        Listing listing = program.getListing();
+        AddressSetView set = (addrSet != null) ? addrSet : program.getMemory();
+        Address maxAddr = set.getMaxAddress();
+
+        try (PrintWriter w = new PrintWriter(new FileWriter(asmFile))) {
+
+            w.println("; MSX ROM SJASM export");
+            w.println("    ORG 0x4000");
+            w.println();
+
+            Address last = set.getMinAddress();
+            CodeUnitIterator it = listing.getCodeUnits(set, true);
+
+            while (it.hasNext() && !monitor.isCancelled()) {
+
+                CodeUnit cu = it.next();
+                Address addr = cu.getAddress();
+
+                if (fillWithDb && last.compareTo(addr) < 0) {
+                    emitDbRange(w, program, last, addr);
+                }
+
+                if (cu instanceof Instruction i) {
+                    emitInstruction(w, i, program);
+                } else if (cu instanceof Data d) {
+                    emitData(w, d, program);
+                }
+
+                Address end = cu.getMaxAddress();
+                if (end.equals(maxAddr)) break;
+                last = end.add(1);
+            }
+
+            if (fillWithDb && last.compareTo(maxAddr) < 0) {
+                emitDbRange(w, program, last, maxAddr);
+            }
+
+            w.println();
+            w.println("    END");
+        }
+    }
+
+    // =============================================================
+    // Emit helpers
+    // =============================================================
+
+    private void emitInstruction(PrintWriter w, Instruction instr, Program program) {
+
+        Address addr = instr.getAddress();
+        SymbolTable symtab = program.getSymbolTable();
+
+        // 1. Obtenemos TODOS los símbolos en esta dirección (no solo el primary)
+        Symbol primary = symtab.getPrimarySymbol(addr);
+        List<Symbol> allSymbols = new ArrayList<>(List.of(symtab.getSymbols(addr)));
+
+        // 2. Imprimimos el primary SI existe y NO es uno de los que queremos ignorar
+        if (primary != null) {
+            String name = primary.getName();
+            if (!name.startsWith("FUN_")          // funciones autogeneradas
+                    && !name.startsWith("ram_")       // si no quieres los ram_xxxx
+                    && !name.startsWith("LAB_ram_")   // opcional: filtra los LAB automáticos
+                    && !name.contains("undefined")    // por si acaso
+            ) {
+                w.println(name + ":");
+            }
+        }
+
+        // 3. Opcional: imprimir TODOS los demás símbolos como comentarios o alias
+        //    (útil para debugging, pero normalmente no se quiere en ASM final)
+        // for (Symbol sym : allSymbols) {
+        //     if (sym != primary) {
+        //         w.println("; alias: " + sym.getName());
+        //     }
+        // }
+
+        // ────────────────────────────────────────────────
+        // Resto del código (mnemónico + operandos) sin cambios
+        // ...
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("    ").append(instr.getMnemonicString());
+        // ... (tu lógica de operandos con referencias ya funciona bien)
+
+        // comentarios
+        if (includeComments) {
+            String c = program.getListing().getComment(CommentType.EOL, addr);
+            if (c != null && !c.isBlank()) {
+                sb.append("  ; ").append(c.trim());
+            }
+        }
+
+        w.println(sb);
+    }
+
+
+    private void emitData(PrintWriter w, Data data, Program program) {
+
+        Address start = data.getAddress();
+        Address max = start.getAddressSpace().getMaxAddress();
+
+        int len = data.getLength();
+        long available = max.subtract(start) + 1;
+        if (available <= 0) return;
+
+        int safeLen = (int) Math.min(len, available);
+        emitDbRange(w, program, start, start.add(safeLen));
+    }
+
+    private void emitDbRange(PrintWriter w, Program program, Address start, Address end) {
+
+        Memory mem = program.getMemory();
+        Address cur = start;
+
+        while (cur.compareTo(end) < 0) {
+
+            w.print("    db ");
+            int count = 0;
+
+            while (count < 16 && cur.compareTo(end) < 0) {
+                try {
+                    w.printf("0x%02X", mem.getByte(cur) & 0xFF);
+                } catch (MemoryAccessException e) {
+                    w.print("??");
+                }
+
+                cur = cur.add(1);
+                if (count < 15 && cur.compareTo(end) < 0) w.print(",");
+                count++;
+            }
+            w.println();
+        }
+    }
+
+    // =============================================================
+    // Utils
+    // =============================================================
+
+    private boolean isLikelyRomBlock(MemoryBlock block) {
+        long start = block.getStart().getOffset();
+        String name = block.getName().toUpperCase();
+        return start >= 0x4000 &&
+                (name.contains("ROM") || name.contains("BANK") || name.contains("SLOT"));
+    }
+
+    private File changeExtension(File f, String ext) {
+        String p = f.getAbsolutePath();
+        int i = p.lastIndexOf('.');
+        if (i > 0) p = p.substring(0, i);
+        return new File(p + ext);
+    }
+}
+*/
