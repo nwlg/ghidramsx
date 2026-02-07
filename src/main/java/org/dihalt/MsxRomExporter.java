@@ -32,6 +32,8 @@ public class MsxRomExporter extends Exporter {
     private boolean fillWithDb = true;
     private boolean smartData = true;
 
+    private Map<String, Boolean> blockSelection = new LinkedHashMap<>();
+
     public MsxRomExporter() {
         super("MSX ROM SJASM ASM exporter", "rom", new HelpLocation("", ""));
     }
@@ -56,13 +58,39 @@ public class MsxRomExporter extends Exporter {
         opts.add(new Option(OPTION_FILL_WITH_DB, fillWithDb, Boolean.class, ""));
         opts.add(new Option(OPTION_SMART_DATA, smartData, Boolean.class, ""));
 
+        // 🔥 Dynamic Memory Blocks
+        Program program = (Program) svc.getDomainObject();
+        if (program != null) {
+            MemoryBlock[] blocks = program.getMemory().getBlocks();
+
+            for (MemoryBlock block : blocks) {
+                String name = "Export block: " + block.getName();
+
+                // All set by default
+                blockSelection.putIfAbsent(block.getName(), true);
+
+                opts.add(new Option(
+                        name,
+                        blockSelection.get(block.getName()),
+                        Boolean.class,
+                        ""));
+            }
+        }
+
         return opts;
     }
 
     @Override
     public void setOptions(List<Option> options) {
-
         for (Option o : options) {
+            String name = o.getName();
+
+            if (name.startsWith("Export block: ")) {
+                String blockName = name.substring("Export block: ".length());
+                blockSelection.put(blockName, (Boolean) o.getValue());
+                continue;
+            }
+
             switch (o.getName()) {
                 case OPTION_MEGAROM_TYPE ->
                         megaRomType = MegaRomType.fromName(((String) o.getValue()).trim().toUpperCase());
@@ -105,7 +133,8 @@ public class MsxRomExporter extends Exporter {
 
         try (FileOutputStream fos = new FileOutputStream(f)) {
             for (MemoryBlock block : program.getMemory().getBlocks()) {
-                if (onlyRomBanks && !isLikelyRomBlock(block)) continue;
+                if (!blockSelection.getOrDefault(block.getName(), true))
+                    continue;
                 if (!block.isInitialized()) continue;
 
                 byte[] buf = new byte[(int) block.getSize()];
@@ -124,7 +153,19 @@ public class MsxRomExporter extends Exporter {
             throws IOException {
 
         Listing listing = program.getListing();
-        AddressSetView set = (addrSet != null) ? addrSet : program.getMemory();
+
+        //AddressSetView set = (addrSet != null) ? addrSet : program.getMemory();
+
+        AddressSet addressSet = new AddressSet();
+
+        for (MemoryBlock block : program.getMemory().getBlocks()) {
+            if (blockSelection.getOrDefault(block.getName(), true)) {
+                addressSet.addRange(block.getStart(), block.getEnd());
+            }
+        }
+
+        AddressSetView set = addressSet;
+
         Address maxAddr = set.getMaxAddress();
 
         try (PrintWriter w = new PrintWriter(new FileWriter(asmFile))) {
