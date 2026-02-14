@@ -4,6 +4,7 @@ import ghidra.app.util.DomainObjectService;
 import ghidra.app.util.Option;
 import ghidra.app.util.exporter.Exporter;
 import ghidra.app.util.exporter.ExporterException;
+import ghidra.app.util.template.TemplateSimplifier;
 import ghidra.framework.model.DomainObject;
 import ghidra.program.model.address.*;
 import ghidra.program.model.listing.*;
@@ -12,6 +13,12 @@ import ghidra.program.model.symbol.*;
 import ghidra.util.HelpLocation;
 import ghidra.util.Msg;
 import ghidra.util.task.TaskMonitor;
+
+import ghidra.program.model.listing.CodeUnitFormat;
+import ghidra.program.model.listing.CodeUnitFormatOptions;
+import ghidra.program.model.listing.CodeUnitFormatOptions.ShowBlockName;
+import ghidra.program.model.listing.CodeUnitFormatOptions.ShowNamespace;
+import ghidra.program.util.OperandFieldLocation;
 
 import java.io.*;
 import java.util.*;
@@ -34,6 +41,7 @@ public class MsxRomExporter extends Exporter {
 
     private Map<String, Boolean> blockSelection = new LinkedHashMap<>();
     private Map<Address, String> exportedLabels = new TreeMap<>();
+    private CodeUnitFormat cuFormat;
 
     public MsxRomExporter() {
         super("MSX ROM SJASM ASM exporter", "rom", new HelpLocation("", ""));
@@ -168,8 +176,6 @@ public class MsxRomExporter extends Exporter {
 
         Listing listing = program.getListing();
 
-        //AddressSetView set = (addrSet != null) ? addrSet : program.getMemory();
-
         AddressSet addressSet = new AddressSet();
 
         for (MemoryBlock block : program.getMemory().getBlocks()) {
@@ -190,6 +196,25 @@ public class MsxRomExporter extends Exporter {
 
             Address last = set.getMinAddress();
             CodeUnitIterator it = listing.getCodeUnits(set, true);
+
+            // Configure options to match your desired output.
+            // - Set includeExtendedReferenceMarkup to false to avoid "HL=>" and just get "(label)".
+            // - Adjust other flags as needed (e.g., follow pointers for effective addresses).
+            CodeUnitFormatOptions formatOptions = new CodeUnitFormatOptions(
+                    ShowBlockName.NEVER,  // Or NON_LOCAL if you want block names in operands.
+                    ShowNamespace.NON_LOCAL,  // Adjust namespace visibility.
+                    null,  // No custom prefix.
+                    true,  // Include register variable markup.
+                    true,  // Include stack variable markup.
+                    true,  // Include inferred variable markup.
+                    false,  // Include extended reference markup? Set false to avoid "=>".
+                    true,  // Include scalar adjustment.
+                    true,  // Include library names in namespace.
+                    true,  // Follow referenced pointers? Set true for effective address resolution.
+                    new TemplateSimplifier()  // Default simplifier; disable if not needed.
+            );
+            cuFormat = new CodeUnitFormat(formatOptions);
+
 
             while (it.hasNext() && !monitor.isCancelled()) {
 
@@ -230,26 +255,26 @@ public class MsxRomExporter extends Exporter {
         SymbolTable symtab = program.getSymbolTable();
         Listing listing = program.getListing();
 
-        // 1. Obtener primary symbol si existe (incluye user labels, analysis labels, etc.)
+        // 1. Get primary symbol if it exists (includes user labels, analysis labels, etc.)
         Symbol primary = symtab.getPrimarySymbol(addr);
         String labelToPrint = null;
 
         if (primary != null) {
-            // Etiquetas reales o analizadas (FUN_, ENTRY, etc.)
-            labelToPrint = primary.getName(true);  // sin namespace prefix
+            // Real or analyzed labels (FUN_, ENTRY, etc.)
+            labelToPrint = primary.getName(true);  // without namespace prefix
         } else {
-            // Solo generar LAB_ si realmente hay referencias entrantes (como hace Ghidra)
+            // Only generate LAB_ if there are incoming references (like Ghidra does)
             ReferenceManager refMgr = program.getReferenceManager();
             ReferenceIterator refsTo = refMgr.getReferencesTo(addr);
-            boolean hasIncomingRef = refsTo.hasNext();  // al menos una referencia entrante
+            boolean hasIncomingRef = refsTo.hasNext();  // at least one incoming reference
 
             if (hasIncomingRef) {
-                // Generar nombre como Ghidra: LAB_ram_XXXX o similar
+                // Generate name like Ghidra: LAB_ram_XXXX or similar
                 String space = addr.getAddressSpace().getName().toLowerCase();
                 String offset = String.format("%04x", addr.getOffset());
                 labelToPrint = "LAB_" + space + "_" + offset;
             }
-            // Si es inicio de función pero no tiene primary → raro, pero cubrimos
+            // If it's a function start but has no primary → rare, but covered
             else if (program.getFunctionManager().getFunctionAt(addr) != null) {
                 String space = addr.getAddressSpace().getName().toLowerCase();
                 String offset = String.format("%04x", addr.getOffset());
@@ -257,57 +282,57 @@ public class MsxRomExporter extends Exporter {
             }
         }
 
-        // Imprimir SOLO si hay etiqueta válida (evita una por línea)
+        // Print ONLY if there is a valid label (avoids one per line)
         if (labelToPrint != null && !labelToPrint.isEmpty()) {
             w.println(labelToPrint + ":");
             exportedLabels.put(addr, labelToPrint);
         }
 
-        // Mnemonic + operandos
+        // Mnemonic + operands
         String mnemonic = instr.getMnemonicString();
         StringBuilder sb = new StringBuilder("    " + mnemonic);
 
+        // Initial separator after mnemonic (usually a space)
+        String initialSep = instr.getSeparator(0);
+        if (initialSep != null && !initialSep.isEmpty()) {
+            sb.append(initialSep);
+        } else {
+            sb.append(" ");  // force space if Ghidra doesn't provide it
+        }
+
         int ops = instr.getNumOperands();
-        if (ops > 0) sb.append(" ");
-
         for (int i = 0; i < ops; i++) {
-            if (i > 0) sb.append(",");
-
-            Reference ref = instr.getPrimaryReference(i);
-            Address target = null;
-            if (ref != null && ref.getToAddress() != null && !ref.getToAddress().equals(Address.NO_ADDRESS)) {
-                target = ref.getToAddress();
-            }
-
-            boolean handled = false;
-            if (target != null) {
-                // Preferir etiqueta real si existe
-                Symbol sym = symtab.getPrimarySymbol(target);
-                if (sym != null && sym.getName().length() > 0) {
-                    sb.append(sym.getName(true));
-                    handled = true;
+            if (i > 0) {
+                // Separator between operands: usually comma + space
+                String sep = instr.getSeparator(i);
+                if (sep != null && !sep.isEmpty()) {
+                    sb.append(sep);
                 } else {
-                    // Si no hay primary, pero hay refs entrantes → usar LAB_
-                    ReferenceIterator refsToTarget = program.getReferenceManager().getReferencesTo(target);
-                    if (refsToTarget.hasNext()) {
-                        String space = target.getAddressSpace().getName().toLowerCase();
-                        String offset = String.format("%04x", target.getOffset());
-                        sb.append("LAB_" + space + "_" + offset);
-                        handled = true;
-                    }
+                    sb.append(", ");
                 }
             }
 
-            if (!handled) {
-                // Fallback a lo que Ghidra muestra por defecto
-                sb.append(instr.getDefaultOperandRepresentation(i));
-            }
+            // Get operand formatted by Ghidra
+            String op = cuFormat.getOperandRepresentationString(instr, i);
+
+            // Clean and normalize a bit (optional but recommended)
+            op = op.trim();                    // remove extra spaces
+            // op = op.replace(" ", "");       // if you want to remove ALL internal spaces (careful with "IX + 5")
+            // op = op.toUpperCase();          // if you prefer uppercase registers
+
+            sb.append(op);
         }
 
-        // Comentario EOL
+        // Final comment (if enabled)
         if (includeComments) {
-            String c = listing.getComment(CommentType.EOL, addr);
+            String c = listing.getComment(CommentType.EOL, instr.getAddress());
             if (c != null && !c.isBlank()) {
+                // Align comment a bit nicer
+                String line = sb.toString();
+                int len = line.length();
+                if (len < 40) {
+                    sb.append(" ".repeat(40 - len));  // padding to ~column 40
+                }
                 sb.append("  ; ").append(c.trim());
             }
         }
@@ -377,7 +402,7 @@ public class MsxRomExporter extends Exporter {
             while (symIt.hasNext() && !monitor.isCancelled()) {
                 Symbol sym = symIt.next();
 
-                // Solo símbolos con fuente USER o ANALYSIS (evitamos IMPORT, EXTERNAL por ahora)
+                // Only symbols with source USER or ANALYSIS (we skip IMPORT, EXTERNAL for now)
                 if (sym.getSource() != SourceType.USER_DEFINED &&
                         sym.getSource() != SourceType.ANALYSIS &&
                         sym.getSource() != SourceType.IMPORTED) {
@@ -386,17 +411,17 @@ public class MsxRomExporter extends Exporter {
 
                 Address addr = sym.getAddress();
 
-                // Solo si está dentro de los bloques seleccionados
+                // Only if inside selected blocks
                 if (!selectedSet.contains(addr)) {
                     continue;
                 }
 
-                // Dirección en hexadecimal (4 dígitos, sin 0x)
+                // Address in hexadecimal (4 digits, no 0x)
                 String addrStr = String.format("%04X", addr.getOffset());
 
-                String name = sym.getName(true);  // sin namespace prefix
+                String name = sym.getName(true);  // without namespace prefix
 
-                // Comentario EOL si existe
+                // EOL comment if exists
                 String comment = "";
                 String eol = program.getListing().getComment(CommentType.EOL, addr);
                 if (eol != null && !eol.isBlank()) {
@@ -414,11 +439,11 @@ public class MsxRomExporter extends Exporter {
                     Address addr = entry.getKey();
                     String name = entry.getValue();
 
-                    if (!selectedSet.contains(addr)) continue; // por si acaso
+                    if (!selectedSet.contains(addr)) continue; // just in case
 
                     String addrStr = String.format("%04X", addr.getOffset());
 
-                    // Comentario EOL si existe
+                    // EOL comment if exists
                     String comment = "";
                     String eol = program.getListing().getComment(CommentType.EOL, addr);
                     if (eol != null && !eol.isBlank()) {
@@ -445,22 +470,22 @@ public class MsxRomExporter extends Exporter {
         Symbol primary = symtab.getPrimarySymbol(addr);
 
         if (primary != null) {
-            // Etiqueta real (user, analysis, imported, etc.)
-            return primary.getName(true);  // true = sin prefijo de namespace si es global
+            // Real label (user, analysis, imported, etc.)
+            return primary.getName(true);  // true = no namespace prefix if global
         }
 
-        // No hay símbolo primario → generar el nombre automático como hace Ghidra
+        // No primary symbol → generate automatic name like Ghidra does
         String spaceName = addr.getAddressSpace().getName().toLowerCase();
-        String offsetHex = String.format("%04x", addr.getOffset());  // o %x si prefieres sin ceros
+        String offsetHex = String.format("%04x", addr.getOffset());  // or %x if you prefer no leading zeros
 
-        // ¿Es inicio de función?
+        // Is it a function start?
         Function func = program.getFunctionManager().getFunctionAt(addr);
         if (func != null) {
             return "FUN_" + spaceName + "_" + offsetHex;
         }
 
-        // Por defecto: label (LAB_)
-        // Nota: en algunos casos Ghidra usa DAT_, SUB_, etc., pero LAB_ es el más común para jumps/referencias
+        // Default: label (LAB_)
+        // Note: in some cases Ghidra uses DAT_, SUB_, etc., but LAB_ is the most common for jumps/references
         return "LAB_" + spaceName + "_" + offsetHex;
     }
 
