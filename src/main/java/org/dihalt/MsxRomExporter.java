@@ -25,18 +25,12 @@ import java.util.*;
 
 public class MsxRomExporter extends Exporter {
 
-    private static final String OPTION_MEGAROM_TYPE = "MegaROM Type";
     private static final String OPTION_INCLUDE_COMMENTS = "Include ASM remarks";
-    private static final String OPTION_ONLY_ROM_BANKS = "Export only ROM banks";
     private static final String OPTION_FILL_WITH_DB = "Fill gaps & data with db";
-    private static final String OPTION_SMART_DATA = "Smart data representation";
     private static final String OPTION_CUSTOM_LABELS = "Include custom labels";
 
-    private MegaRomType megaRomType = MegaRomType.PLAIN;
     private boolean includeComments = true;
-    private boolean onlyRomBanks = false;
     private boolean fillWithDb = true;
-    private boolean smartData = true;
     private boolean customLabels = true;
 
     private Map<String, Boolean> blockSelection = new LinkedHashMap<>();
@@ -56,16 +50,8 @@ public class MsxRomExporter extends Exporter {
 
         List<Option> opts = new ArrayList<>();
 
-        opts.add(new Option(
-                OPTION_MEGAROM_TYPE,
-                megaRomType.getDescription(),
-                String.class,
-                MsxRomLoader.MEGAROMTYPES_LIST_STRING));
-
         opts.add(new Option(OPTION_INCLUDE_COMMENTS, includeComments, Boolean.class, ""));
-        opts.add(new Option(OPTION_ONLY_ROM_BANKS, onlyRomBanks, Boolean.class, ""));
         opts.add(new Option(OPTION_FILL_WITH_DB, fillWithDb, Boolean.class, ""));
-        opts.add(new Option(OPTION_SMART_DATA, smartData, Boolean.class, ""));
         opts.add(new Option(OPTION_CUSTOM_LABELS, customLabels, Boolean.class, ""));
 
 
@@ -103,12 +89,8 @@ public class MsxRomExporter extends Exporter {
             }
 
             switch (o.getName()) {
-                case OPTION_MEGAROM_TYPE ->
-                        megaRomType = MegaRomType.fromName(((String) o.getValue()).trim().toUpperCase());
                 case OPTION_INCLUDE_COMMENTS -> includeComments = (Boolean) o.getValue();
-                case OPTION_ONLY_ROM_BANKS -> onlyRomBanks = (Boolean) o.getValue();
                 case OPTION_FILL_WITH_DB -> fillWithDb = (Boolean) o.getValue();
-                case OPTION_SMART_DATA -> smartData = (Boolean) o.getValue();
                 case OPTION_CUSTOM_LABELS -> customLabels = (Boolean) o.getValue();
             }
         }
