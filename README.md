@@ -41,3 +41,5 @@ When exporting your program as "MSX ROM SJASM ASM exporter", the following optio
 - **Fill gaps & data with db**: (Default: `true`) Exports data and unanalyzed areas as `db` directives.
 - **Include custom labels**: (Default: `true`) Includes user-defined labels in the exported symbol file.
 - **Export block: [Block Name]**: (Default: `true`) A dynamic list of checkboxes for each memory block in the program, allowing you to selectively include or exclude specific blocks from the export.
+
+ btv
