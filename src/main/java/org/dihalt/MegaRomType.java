@@ -17,13 +17,21 @@ public enum MegaRomType {
         return description;
     }
 
-    //get enum by name
-    public static MegaRomType fromName(String name) {
+    // Cache for faster lookup
+    private static final java.util.Map<String, MegaRomType> BY_NAME = new java.util.HashMap<>();
+
+    static {
         for (MegaRomType type : values()) {
-            if (type.name().equalsIgnoreCase(name) || type.description.equalsIgnoreCase(name)) {
-                return type;
-            }
+            BY_NAME.put(type.name().toUpperCase(), type);
+            // Ensure description is also mapped in uppercase for case-insensitive lookup
+            BY_NAME.put(type.getDescription().toUpperCase(), type);
         }
-        return null; // noy found
+    }
+
+    // get enum by name
+    public static MegaRomType fromName(String name) {
+        if (name == null)
+            return null;
+        return BY_NAME.get(name.toUpperCase());
     }
 }

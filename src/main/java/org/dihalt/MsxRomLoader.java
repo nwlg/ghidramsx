@@ -35,8 +35,22 @@ import java.util.stream.Collectors;
 public class MsxRomLoader extends AbstractLibrarySupportLoader {
 
     private static final long ROM_BASE = 0x4000;
-    public static final String MEGAROMTYPES_LIST_STRING = Arrays.stream(MegaRomType.values()).map(megaRomType -> megaRomType.getDescription()).collect(Collectors.joining(" | "));
+    public static final String MEGAROMTYPES_LIST_STRING = Arrays.stream(MegaRomType.values())
+            .map(megaRomType -> megaRomType.getDescription()).collect(Collectors.joining(" | "));
     public static final String ROM_MEGAROM_TYPE = "Rom/MegaRom type: ";
+
+    // MegaROM Detection Constants
+    private static final int KONAMI5_SCC_1 = 0x5000;
+    private static final int KONAMI5_SCC_2 = 0x9000;
+    private static final int KONAMI5_SCC_3 = 0xB000;
+    private static final int KONAMI4_1 = 0x4000;
+    private static final int KONAMI4_2 = 0x8000;
+    private static final int KONAMI4_3 = 0xA000;
+    private static final int ASCII8_1 = 0x6800;
+    private static final int ASCII8_2 = 0x7800;
+    private static final int ASCII16_KONAMI4_ASCII8 = 0x6000;
+    private static final int KONAMI5_ASCII8_ASCII16 = 0x7000;
+    private static final int ASCII16_ONLY = 0x77FF;
 
     @Override
     public String getName() {
@@ -44,14 +58,14 @@ public class MsxRomLoader extends AbstractLibrarySupportLoader {
     }
 
     /*
-     Megarom strategy:
-      Basically is guessing megarom type and setting as default option
-      User may change default option to a valid option
+     * Megarom strategy:
+     * Basically is guessing megarom type and setting as default option
+     * User may change default option to a valid option
      */
     @Override
     public List<Option> getDefaultOptions(ByteProvider provider, LoadSpec loadSpec,
-                                          DomainObject domainObject, boolean loadIntoProgram,
-                                          boolean mirrorFsLayout) {
+            DomainObject domainObject, boolean loadIntoProgram,
+            boolean mirrorFsLayout) {
 
         List<Option> list = super.getDefaultOptions(provider, loadSpec, domainObject,
                 loadIntoProgram, mirrorFsLayout);
@@ -69,8 +83,7 @@ public class MsxRomLoader extends AbstractLibrarySupportLoader {
                 ROM_MEGAROM_TYPE + MEGAROMTYPES_LIST_STRING,
                 detected.getDescription(),
                 String.class,
-                ROM_MEGAROM_TYPE + MEGAROMTYPES_LIST_STRING
-        ));
+                ROM_MEGAROM_TYPE + MEGAROMTYPES_LIST_STRING));
 
         return list;
     }
@@ -78,28 +91,26 @@ public class MsxRomLoader extends AbstractLibrarySupportLoader {
     // Called during loading
     public MegaRomType validateUserOptions(ImporterSettings s) {
         Msg.info(this, "MSX: Validating options ...");
-        List<Option> optionList = s.options();   // get previous selected options
+        List<Option> optionList = s.options(); // get previous selected options
         MegaRomType megaRomType = MegaRomType.PLAIN; // default
         // read megarom option
         Optional<Option> megaromOption = optionList.stream()
-                .filter(option ->  (ROM_MEGAROM_TYPE + MEGAROMTYPES_LIST_STRING).equals(option.getName()))
+                .filter(option -> (ROM_MEGAROM_TYPE + MEGAROMTYPES_LIST_STRING).equals(option.getName()))
                 .findFirst();
 
         // validate
         if (megaromOption.isPresent()) {
             String raw = ((String) megaromOption.get().getValue())
-            .trim()
+                    .trim()
                     .toUpperCase()
                     .replace(" ", "")
                     .replace("-", ""); // clean string
             try {
                 megaRomType = MegaRomType.valueOf(raw);
-            }
-            catch (IllegalArgumentException e) {
+            } catch (IllegalArgumentException e) {
                 throw new IllegalArgumentException(
                         "Invalid MegaROM Type: '" + raw +
-                                "'. Valid values are: " + MEGAROMTYPES_LIST_STRING
-                );
+                                "'. Valid values are: " + MEGAROMTYPES_LIST_STRING);
             }
             Msg.info(this, "MSX: MegaROM type:" + megaRomType.getDescription());
         }
@@ -145,7 +156,6 @@ public class MsxRomLoader extends AbstractLibrarySupportLoader {
         TaskMonitor monitor = s.monitor();
         MessageLog log = s.log();
 
-
         MegaRomType megaRomType = validateUserOptions(s);
         AddressSpace space = program.getAddressFactory().getDefaultAddressSpace();
 
@@ -162,13 +172,13 @@ public class MsxRomLoader extends AbstractLibrarySupportLoader {
         long[] slot_bases;
         if (megaRomType == MegaRomType.PLAIN) {
             page_size = size;
-            slot_bases = new long[]{ROM_BASE};
+            slot_bases = new long[] { ROM_BASE };
         } else if (megaRomType == MegaRomType.ASCII16) {
             page_size = 0x4000;
-            slot_bases = new long[]{0x4000, 0x8000};
+            slot_bases = new long[] { 0x4000, 0x8000 };
         } else {
             page_size = 0x2000;
-            slot_bases = new long[]{0x4000, 0x6000, 0x8000, 0xA000};
+            slot_bases = new long[] { 0x4000, 0x6000, 0x8000, 0xA000 };
         }
 
         long num_banks = size / page_size;
@@ -180,7 +190,7 @@ public class MsxRomLoader extends AbstractLibrarySupportLoader {
                     "BIOS",
                     space.getAddress(0x0000),
                     0x4000,
-                    false   // overlay?
+                    false // overlay?
             );
             bios.setRead(true);
             bios.setWrite(false);
@@ -206,15 +216,15 @@ public class MsxRomLoader extends AbstractLibrarySupportLoader {
                         initial_is,
                         block_size,
                         monitor,
-                        false
-                );
+                        false);
                 initial_block.setRead(true);
                 initial_block.setWrite(false);
                 initial_block.setExecute(true);
 
                 // Create overlay blocks for other banks
                 for (int b = 0; b < num_banks; b++) {
-                    if (b == initial_bank) continue;
+                    if (b == initial_bank)
+                        continue;
 
                     InputStream overlay_is = provider.getInputStream(b * page_size);
                     MemoryBlock overlay_block = program.getMemory().createInitializedBlock(
@@ -223,7 +233,7 @@ public class MsxRomLoader extends AbstractLibrarySupportLoader {
                             overlay_is,
                             block_size,
                             monitor,
-                            true  // overlay
+                            true // overlay
                     );
                     overlay_block.setRead(true);
                     overlay_block.setWrite(false);
@@ -236,8 +246,7 @@ public class MsxRomLoader extends AbstractLibrarySupportLoader {
                     "RAM",
                     space.getAddress(0xC000),
                     0x4000,
-                    false
-            );
+                    false);
             ram.setRead(true);
             ram.setWrite(true);
             ram.setExecute(true); // yeah, it could happen!
@@ -283,8 +292,6 @@ public class MsxRomLoader extends AbstractLibrarySupportLoader {
         loadSymbolsFromResource(program, space, log);
     }
 
-
-
     private static int readLittleEndianWord(ByteProvider p, int off) throws IOException {
         int lo = p.readByte(off) & 0xff;
         int hi = p.readByte(off + 1) & 0xff;
@@ -304,64 +311,63 @@ public class MsxRomLoader extends AbstractLibrarySupportLoader {
             if (provider.readByte(i) == 0x32) {
                 int value = (provider.readByte(i + 1) & 0xFF) + ((provider.readByte(i + 2) & 0xFF) << 8);
                 switch (value) {
-                    case 0x5000:
-                    case 0x9000:
-                    case 0xb000:
+                    case KONAMI5_SCC_1:
+                    case KONAMI5_SCC_2:
+                    case KONAMI5_SCC_3:
                         megaRomCounts[MegaRomType.KONAMI5.ordinal()]++;
                         break;
-                    case 0x4000:
-                    case 0x8000:
-                    case 0xa000:
+                    case KONAMI4_1:
+                    case KONAMI4_2:
+                    case KONAMI4_3:
                         megaRomCounts[MegaRomType.KONAMI4.ordinal()]++;
                         break;
-                    case 0x6800:
-                    case 0x7800:
+                    case ASCII8_1:
+                    case ASCII8_2:
                         megaRomCounts[MegaRomType.ASCII8.ordinal()]++;
                         break;
-                    case 0x6000:
+                    case ASCII16_KONAMI4_ASCII8:
                         megaRomCounts[MegaRomType.KONAMI4.ordinal()]++;
                         megaRomCounts[MegaRomType.ASCII8.ordinal()]++;
                         megaRomCounts[MegaRomType.ASCII16.ordinal()]++;
                         break;
-                    case 0x7000:
+                    case KONAMI5_ASCII8_ASCII16:
                         megaRomCounts[MegaRomType.KONAMI5.ordinal()]++;
                         megaRomCounts[MegaRomType.ASCII8.ordinal()]++;
                         megaRomCounts[MegaRomType.ASCII16.ordinal()]++;
                         break;
-                    case 0x77ff:
+                    case ASCII16_ONLY:
                         megaRomCounts[MegaRomType.ASCII16.ordinal()]++;
                         break;
                 }
             }
         }
-        int maxVal= 0;
+        int maxVal = 0;
         int maxIndex = 1000; // high dummy
-        for (int i=0 ; i<megaRomCounts.length;i++) {
-            if (maxVal<megaRomCounts[i]) {
+        for (int i = 0; i < megaRomCounts.length; i++) {
+            if (maxVal < megaRomCounts[i]) {
                 maxVal = megaRomCounts[i];
                 maxIndex = i;
             }
         }
-        if (maxIndex!=1000){
+        if (maxIndex != 1000) {
             return MegaRomType.values()[maxIndex];
-        } else return MegaRomType.PLAIN;
+        } else
+            return MegaRomType.PLAIN;
     }
-
 
     private void loadSymbolsFromResource(
             Program program,
             AddressSpace space,
-            MessageLog log
-    ) throws IOException {
+            MessageLog log) throws IOException {
 
-        Msg.info(this,"MSX: Loading msx_symbols.txt");
+        Msg.info(this, "MSX: Loading msx_symbols.txt");
         InputStream is = getClass().getClassLoader()
                 .getResourceAsStream("msx_symbols.txt");
 
         if (is == null) {
             String info = "MSX: msx_symbols.txt file not found.";
             log.appendMsg(info);
-            Msg.info(this,info);
+            Msg.info(this, info);
             return;
         }
 
@@ -389,8 +395,7 @@ public class MsxRomLoader extends AbstractLibrarySupportLoader {
                 program.getSymbolTable().createLabel(
                         addr,
                         name,
-                        SourceType.IMPORTED
-                );
+                        SourceType.IMPORTED);
             } catch (Exception e) {
                 log.appendMsg("MSX: Cannot create symbol " + name + " at " + parts[0]);
             }
@@ -398,4 +403,3 @@ public class MsxRomLoader extends AbstractLibrarySupportLoader {
         br.close();
     }
 }
-

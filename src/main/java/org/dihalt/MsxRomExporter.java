@@ -54,7 +54,6 @@ public class MsxRomExporter extends Exporter {
         opts.add(new Option(OPTION_FILL_WITH_DB, fillWithDb, Boolean.class, ""));
         opts.add(new Option(OPTION_CUSTOM_LABELS, customLabels, Boolean.class, ""));
 
-
         // 🔥 Dynamic Memory Blocks
         Program program = (Program) svc.getDomainObject();
         if (program != null) {
@@ -122,7 +121,7 @@ public class MsxRomExporter extends Exporter {
             exportSymbols(file, program, selectedAddresses, monitor);
 
         } catch (MemoryAccessException e) {
-            throw new RuntimeException(e);
+            throw new ExporterException(e);
         }
 
         return true;
@@ -139,7 +138,8 @@ public class MsxRomExporter extends Exporter {
             for (MemoryBlock block : program.getMemory().getBlocks()) {
                 if (!blockSelection.getOrDefault(block.getName(), true))
                     continue;
-                if (!block.isInitialized()) continue;
+                if (!block.isInitialized())
+                    continue;
 
                 byte[] buf = new byte[(int) block.getSize()];
                 block.getBytes(block.getStart(), buf);
@@ -153,7 +153,7 @@ public class MsxRomExporter extends Exporter {
     // =============================================================
 
     private void exportAssembly(File asmFile, Program program,
-                                AddressSetView addrSet, TaskMonitor monitor)
+            AddressSetView addrSet, TaskMonitor monitor)
             throws IOException {
 
         Listing listing = program.getListing();
@@ -180,23 +180,24 @@ public class MsxRomExporter extends Exporter {
             CodeUnitIterator it = listing.getCodeUnits(set, true);
 
             // Configure options to match your desired output.
-            // - Set includeExtendedReferenceMarkup to false to avoid "HL=>" and just get "(label)".
-            // - Adjust other flags as needed (e.g., follow pointers for effective addresses).
+            // - Set includeExtendedReferenceMarkup to false to avoid "HL=>" and just get
+            // "(label)".
+            // - Adjust other flags as needed (e.g., follow pointers for effective
+            // addresses).
             CodeUnitFormatOptions formatOptions = new CodeUnitFormatOptions(
-                    ShowBlockName.NEVER,  // Or NON_LOCAL if you want block names in operands.
-                    ShowNamespace.NON_LOCAL,  // Adjust namespace visibility.
-                    null,  // No custom prefix.
-                    true,  // Include register variable markup.
-                    true,  // Include stack variable markup.
-                    true,  // Include inferred variable markup.
-                    false,  // Include extended reference markup? Set false to avoid "=>".
-                    true,  // Include scalar adjustment.
-                    true,  // Include library names in namespace.
-                    true,  // Follow referenced pointers? Set true for effective address resolution.
-                    new TemplateSimplifier()  // Default simplifier; disable if not needed.
+                    ShowBlockName.NEVER, // Or NON_LOCAL if you want block names in operands.
+                    ShowNamespace.NON_LOCAL, // Adjust namespace visibility.
+                    null, // No custom prefix.
+                    true, // Include register variable markup.
+                    true, // Include stack variable markup.
+                    true, // Include inferred variable markup.
+                    false, // Include extended reference markup? Set false to avoid "=>".
+                    true, // Include scalar adjustment.
+                    true, // Include library names in namespace.
+                    true, // Follow referenced pointers? Set true for effective address resolution.
+                    new TemplateSimplifier() // Default simplifier; disable if not needed.
             );
             cuFormat = new CodeUnitFormat(formatOptions);
-
 
             while (it.hasNext() && !monitor.isCancelled()) {
 
@@ -214,7 +215,8 @@ public class MsxRomExporter extends Exporter {
                 }
 
                 Address end = cu.getMaxAddress();
-                if (end.equals(maxAddr)) break;
+                if (end.equals(maxAddr))
+                    break;
                 last = end.add(1);
             }
 
@@ -237,18 +239,19 @@ public class MsxRomExporter extends Exporter {
         SymbolTable symtab = program.getSymbolTable();
         Listing listing = program.getListing();
 
-        // 1. Get primary symbol if it exists (includes user labels, analysis labels, etc.)
+        // 1. Get primary symbol if it exists (includes user labels, analysis labels,
+        // etc.)
         Symbol primary = symtab.getPrimarySymbol(addr);
         String labelToPrint = null;
 
         if (primary != null) {
             // Real or analyzed labels (FUN_, ENTRY, etc.)
-            labelToPrint = primary.getName(true);  // without namespace prefix
+            labelToPrint = primary.getName(true); // without namespace prefix
         } else {
             // Only generate LAB_ if there are incoming references (like Ghidra does)
             ReferenceManager refMgr = program.getReferenceManager();
             ReferenceIterator refsTo = refMgr.getReferencesTo(addr);
-            boolean hasIncomingRef = refsTo.hasNext();  // at least one incoming reference
+            boolean hasIncomingRef = refsTo.hasNext(); // at least one incoming reference
 
             if (hasIncomingRef) {
                 // Generate name like Ghidra: LAB_ram_XXXX or similar
@@ -279,7 +282,7 @@ public class MsxRomExporter extends Exporter {
         if (initialSep != null && !initialSep.isEmpty()) {
             sb.append(initialSep);
         } else {
-            sb.append(" ");  // force space if Ghidra doesn't provide it
+            sb.append(" "); // force space if Ghidra doesn't provide it
         }
 
         int ops = instr.getNumOperands();
@@ -298,9 +301,10 @@ public class MsxRomExporter extends Exporter {
             String op = cuFormat.getOperandRepresentationString(instr, i);
 
             // Clean and normalize a bit (optional but recommended)
-            op = op.trim();                    // remove extra spaces
-            // op = op.replace(" ", "");       // if you want to remove ALL internal spaces (careful with "IX + 5")
-            // op = op.toUpperCase();          // if you prefer uppercase registers
+            op = op.trim(); // remove extra spaces
+            // op = op.replace(" ", ""); // if you want to remove ALL internal spaces
+            // (careful with "IX + 5")
+            // op = op.toUpperCase(); // if you prefer uppercase registers
 
             sb.append(op);
         }
@@ -313,7 +317,7 @@ public class MsxRomExporter extends Exporter {
                 String line = sb.toString();
                 int len = line.length();
                 if (len < 40) {
-                    sb.append(" ".repeat(40 - len));  // padding to ~column 40
+                    sb.append(" ".repeat(40 - len)); // padding to ~column 40
                 }
                 sb.append("  ; ").append(c.trim());
             }
@@ -329,14 +333,14 @@ public class MsxRomExporter extends Exporter {
 
         int len = data.getLength();
         long available = max.subtract(start) + 1;
-        if (available <= 0) return;
+        if (available <= 0)
+            return;
 
         int safeLen = (int) Math.min(len, available);
-        //Msg.info(this,"safeLen="+safeLen);
         try {
             emitDbRange(w, program, start, start.add(safeLen));
         } catch (Exception e) {
-            Msg.info(this,"Exporting finished.");
+            Msg.info(this, "Exporting finished.");
         }
     }
 
@@ -358,13 +362,13 @@ public class MsxRomExporter extends Exporter {
                 }
 
                 cur = cur.add(1);
-                if (count < 15 && cur.compareTo(end) < 0) w.print(",");
+                if (count < 15 && cur.compareTo(end) < 0)
+                    w.print(",");
                 count++;
             }
             w.println();
         }
     }
-
 
     private void exportSymbols(File baseFile, Program program, AddressSetView selectedSet, TaskMonitor monitor)
             throws IOException {
@@ -401,7 +405,7 @@ public class MsxRomExporter extends Exporter {
                 // Address in hexadecimal (4 digits, no 0x)
                 String addrStr = String.format("%04X", addr.getOffset());
 
-                String name = sym.getName(true);  // without namespace prefix
+                String name = sym.getName(true); // without namespace prefix
 
                 // EOL comment if exists
                 String comment = "";
@@ -421,7 +425,8 @@ public class MsxRomExporter extends Exporter {
                     Address addr = entry.getKey();
                     String name = entry.getValue();
 
-                    if (!selectedSet.contains(addr)) continue; // just in case
+                    if (!selectedSet.contains(addr))
+                        continue; // just in case
 
                     String addrStr = String.format("%04X", addr.getOffset());
 
@@ -443,7 +448,6 @@ public class MsxRomExporter extends Exporter {
         Msg.info(this, "Symbols exported to: " + symFile.getAbsolutePath());
     }
 
-
     // =============================================================
     // Utils
     // =============================================================
@@ -453,12 +457,12 @@ public class MsxRomExporter extends Exporter {
 
         if (primary != null) {
             // Real label (user, analysis, imported, etc.)
-            return primary.getName(true);  // true = no namespace prefix if global
+            return primary.getName(true); // true = no namespace prefix if global
         }
 
         // No primary symbol → generate automatic name like Ghidra does
         String spaceName = addr.getAddressSpace().getName().toLowerCase();
-        String offsetHex = String.format("%04x", addr.getOffset());  // or %x if you prefer no leading zeros
+        String offsetHex = String.format("%04x", addr.getOffset()); // or %x if you prefer no leading zeros
 
         // Is it a function start?
         Function func = program.getFunctionManager().getFunctionAt(addr);
@@ -467,7 +471,8 @@ public class MsxRomExporter extends Exporter {
         }
 
         // Default: label (LAB_)
-        // Note: in some cases Ghidra uses DAT_, SUB_, etc., but LAB_ is the most common for jumps/references
+        // Note: in some cases Ghidra uses DAT_, SUB_, etc., but LAB_ is the most common
+        // for jumps/references
         return "LAB_" + spaceName + "_" + offsetHex;
     }
 
@@ -481,7 +486,8 @@ public class MsxRomExporter extends Exporter {
     private File changeExtension(File f, String ext) {
         String p = f.getAbsolutePath();
         int i = p.lastIndexOf('.');
-        if (i > 0) p = p.substring(0, i);
+        if (i > 0)
+            p = p.substring(0, i);
         return new File(p + ext);
     }
 }
