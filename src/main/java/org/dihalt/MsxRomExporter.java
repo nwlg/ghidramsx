@@ -18,7 +18,6 @@ import ghidra.program.model.listing.CodeUnitFormat;
 import ghidra.program.model.listing.CodeUnitFormatOptions;
 import ghidra.program.model.listing.CodeUnitFormatOptions.ShowBlockName;
 import ghidra.program.model.listing.CodeUnitFormatOptions.ShowNamespace;
-import ghidra.program.util.OperandFieldLocation;
 
 import java.io.*;
 import java.util.*;
